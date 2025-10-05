@@ -1,4 +1,4 @@
-name: CI Pipeline
+name: CI Pipeline - Food Delivery
 
 on:
   push:
@@ -7,21 +7,77 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
+  build-and-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # === Backend ===
+      # === Code Scanning (GitHub CodeQL) ===
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+      # === Build Docker images ===
       - name: Build backend Docker image
         run: docker build -t food-backend:latest -f ./backend/Dockerfile ./backend
 
-      # === Frontend ===
       - name: Build frontend Docker image
         run: docker build -t food-frontend:latest -f ./frontend/Dockerfile ./frontend
 
-      # === Admin ===
       - name: Build admin Docker image
         run: docker build -t food-admin:latest -f ./admin/Dockerfile ./admin
+
+      # === Install Trivy for Docker image scanning ===
+      - name: Install Trivy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+      # === Scan built Docker images ===
+      - name: Scan backend image
+        run: trivy image --exit-code 0 --severity HIGH,CRITICAL food-backend:latest
+
+      - name: Scan frontend image
+        run: trivy image --exit-code 0 --severity HIGH,CRITICAL food-frontend:latest
+
+      - name: Scan admin image
+        run: trivy image --exit-code 0 --severity HIGH,CRITICAL food-admin:latest
+
+      # === Login to AWS ECR ===
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # === Push Docker images to AWS ECR ===
+      - name: Push images to ECR
+        env:
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker tag food-backend:latest $ECR_REGISTRY/$ECR_REPOSITORY:backend-latest
+          docker tag food-frontend:latest $ECR_REGISTRY/$ECR_REPOSITORY:frontend-latest
+          docker tag food-admin:latest $ECR_REGISTRY/$ECR_REPOSITORY:admin-latest
+
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:backend-latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:frontend-latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:admin-latest
