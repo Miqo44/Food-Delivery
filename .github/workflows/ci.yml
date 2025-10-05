@@ -1,4 +1,4 @@
-name: Backend CI
+name: CI Pipeline
 
 on:
   push:
@@ -14,11 +14,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      # === Backend ===
+      - name: Build backend Docker image
+        run: docker build -t food-backend:latest -f ./backend/Dockerfile ./backend
 
-      - name: Build Docker image
-        run: docker build -t food-backend:latest ./backend
+      # === Frontend ===
+      - name: Build frontend Docker image
+        run: docker build -t food-frontend:latest -f ./frontend/Dockerfile ./frontend
 
-      - name: Run container
-        run: docker run -d -p 4000:4000 food-backend:latest
+      # === Admin ===
+      - name: Build admin Docker image
+        run: docker build -t food-admin:latest -f ./admin/Dockerfile ./admin
